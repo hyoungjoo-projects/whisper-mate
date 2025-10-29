@@ -1,12 +1,13 @@
 import React from 'react';
-import * as Sentry from '@sentry/react';
-import { ErrorBoundary as SentryErrorBoundary } from '@sentry/react';
+import { ErrorBoundary as SentryErrorBoundary, type FallbackRender } from '@sentry/react';
 
 // 커스텀 에러 UI 컴포넌트
-const ErrorFallback: React.FC<{ error: Error; resetError: () => void }> = ({ 
+const ErrorFallback: FallbackRender = ({ 
   error, 
   resetError 
 }) => {
+  const errorObj = error instanceof Error ? error : new Error(String(error));
+  
   return (
     <div style={{ 
       padding: '2rem', 
@@ -19,7 +20,7 @@ const ErrorFallback: React.FC<{ error: Error; resetError: () => void }> = ({
       <p style={{ marginBottom: '1rem', color: '#64748b' }}>
         예상치 못한 오류가 발생했습니다. 이 문제는 자동으로 기록되었으며 빠르게 해결하겠습니다.
       </p>
-      {error && (
+      {errorObj && (
         <details style={{ 
           marginBottom: '1.5rem', 
           textAlign: 'left',
@@ -41,7 +42,7 @@ const ErrorFallback: React.FC<{ error: Error; resetError: () => void }> = ({
             overflow: 'auto',
             fontSize: '0.875rem'
           }}>
-            {error.toString()}
+            {errorObj.toString()}
           </pre>
         </details>
       )}
