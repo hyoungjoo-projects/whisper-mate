@@ -1,10 +1,14 @@
 import { useState, useRef, useEffect } from 'react'
-import { Mic, Square, Download, Copy, Trash2, Volume2 } from 'lucide-react'
+import { Mic, Square, Download, Copy, Trash2, Volume2, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
 import { useAudioRecorder } from '../hooks/useAudioRecorder'
+import { useSettings } from '../context/SettingsContext'
+import { useTranscriptionState } from '../hooks/useTranscriptionState'
+import { transcribeAudio, type TranscriptionError } from '../services/whisperService'
+import { toast } from 'sonner'
 
 interface AudioVisualizerProps {
   isRecording: boolean
@@ -51,6 +55,14 @@ export default function HomePage() {
     startRecording,
     stopRecording,
   } = useAudioRecorder()
+  const { settings } = useSettings()
+  const {
+    currentTranscription,
+    isTranscribing: appIsTranscribing,
+    setCurrentTranscription,
+    setIsTranscribing,
+    saveAndCopyTranscription,
+  } = useTranscriptionState()
 
   const [transcriptions, setTranscriptions] = useState<TranscriptionResult[]>([
     {
@@ -60,8 +72,8 @@ export default function HomePage() {
       timestamp: new Date(),
     },
   ])
-  const [currentTranscription, setCurrentTranscription] = useState('')
   const timerRef = useRef<number | null>(null)
+  const processingRef = useRef(false)
 
   useEffect(() => {
     if (isRecording) {
@@ -82,26 +94,185 @@ export default function HomePage() {
     }
   }, [isRecording])
 
+  // Auto-process audioBlob when it becomes available after recording stops
+  useEffect(() => {
+    if (!isRecording && audioBlob && audioDuration > 0 && !processingRef.current) {
+      processingRef.current = true
+      
+      // API 키 확인
+      if (!settings.apiKey) {
+        toast.error('API 키가 설정되지 않았습니다.', {
+          description: '설정 페이지에서 OpenAI API 키를 입력해주세요.',
+          action: {
+            label: '설정으로 이동',
+            onClick: () => {
+              window.location.href = '/settings'
+            },
+          },
+        })
+        processingRef.current = false
+        return
+      }
+
+      setIsTranscribing(true)
+      toast.loading('오디오를 전사하는 중...', { id: 'transcribing' })
+
+      transcribeAudio(
+        audioBlob,
+        settings.apiKey,
+        settings.recognitionLanguage
+      )
+        .then((result) => {
+          const newTranscription: TranscriptionResult = {
+            id: Date.now().toString(),
+            text: result.text,
+            duration: formatTime(audioDuration),
+            timestamp: new Date(),
+          }
+
+          setTranscriptions((prev) => [newTranscription, ...prev])
+          setCurrentTranscription(result.text)
+
+          toast.success('전사가 완료되었습니다.', { id: 'transcribing' })
+
+          // 자동 저장 및 복사 (설정에서 활성화된 경우)
+          if (settings.autoSave || settings.autoCopyToClipboard) {
+            saveAndCopyTranscription(result.text, audioDuration, result.language)
+          }
+        })
+        .catch((error) => {
+          const transcriptionError = error as TranscriptionError
+          console.error('Transcription error:', transcriptionError)
+
+          let errorMessage = transcriptionError.message || '전사에 실패했습니다.'
+          let errorDescription = ''
+
+          switch (transcriptionError.code) {
+            case 'INVALID_API_KEY':
+              errorDescription = '설정 페이지에서 API 키를 확인해주세요.'
+              break
+            case 'NETWORK_ERROR':
+              errorDescription = '인터넷 연결을 확인해주세요.'
+              break
+            case 'FILE_ERROR':
+              errorDescription = '오디오 파일 형식이나 크기를 확인해주세요.'
+              break
+            case 'MAX_RETRIES_EXCEEDED':
+              errorDescription = '잠시 후 다시 시도해주세요.'
+              break
+            default:
+              errorDescription = '잠시 후 다시 시도해주세요.'
+          }
+
+          toast.error(errorMessage, {
+            id: 'transcribing',
+            description: errorDescription,
+            duration: 5000,
+          })
+
+          // API 키 오류인 경우 설정 페이지로 안내
+          if (transcriptionError.code === 'INVALID_API_KEY') {
+            setTimeout(() => {
+              window.location.href = '/settings'
+            }, 3000)
+          }
+        })
+        .finally(() => {
+          setIsTranscribing(false)
+          processingRef.current = false
+        })
+    }
+  }, [audioBlob, isRecording, audioDuration, settings, setCurrentTranscription, setIsTranscribing, saveAndCopyTranscription])
+
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60)
     const secs = Math.floor(seconds % 60)
     return `${mins}:${secs.toString().padStart(2, '0')}`
   }
 
-  const handleRecordToggle = () => {
+  const handleRecordToggle = async () => {
     if (isRecording) {
       stopRecording()
       if (audioDuration > 0 && audioBlob) {
-        // TODO: Task #5에서 Whisper API 통합 후 실제 전사 구현
-        // 현재는 UI만 표시
-        const newTranscription: TranscriptionResult = {
-          id: Date.now().toString(),
-          text: 'New transcription from your recording. This is where the AI-powered transcription would appear.',
-          duration: formatTime(audioDuration),
-          timestamp: new Date(),
+        // API 키 확인
+        if (!settings.apiKey) {
+          toast.error('API 키가 설정되지 않았습니다.', {
+            description: '설정 페이지에서 OpenAI API 키를 입력해주세요.',
+            action: {
+              label: '설정으로 이동',
+              onClick: () => {
+                window.location.href = '/settings'
+              },
+            },
+          })
+          return
         }
-        setTranscriptions([newTranscription, ...transcriptions])
-        setCurrentTranscription(newTranscription.text)
+
+        setIsTranscribing(true)
+        toast.loading('오디오를 전사하는 중...', { id: 'transcribing' })
+
+        try {
+          const result = await transcribeAudio(
+            audioBlob,
+            settings.apiKey,
+            settings.recognitionLanguage
+          )
+
+          const newTranscription: TranscriptionResult = {
+            id: Date.now().toString(),
+            text: result.text,
+            duration: formatTime(audioDuration),
+            timestamp: new Date(),
+          }
+
+          setTranscriptions([newTranscription, ...transcriptions])
+          setCurrentTranscription(result.text)
+
+          toast.success('전사가 완료되었습니다.', { id: 'transcribing' })
+
+          // 자동 저장 및 복사 (설정에서 활성화된 경우)
+          if (settings.autoSave || settings.autoCopyToClipboard) {
+            await saveAndCopyTranscription(result.text, audioDuration, result.language)
+          }
+        } catch (error) {
+          const transcriptionError = error as TranscriptionError
+          console.error('Transcription error:', transcriptionError)
+
+          let errorMessage = transcriptionError.message || '전사에 실패했습니다.'
+          let errorDescription = ''
+
+          switch (transcriptionError.code) {
+            case 'INVALID_API_KEY':
+              errorDescription = '설정 페이지에서 API 키를 확인해주세요.'
+              break
+            case 'NETWORK_ERROR':
+              errorDescription = '인터넷 연결을 확인해주세요.'
+              break
+            case 'FILE_ERROR':
+              errorDescription = '오디오 파일 형식이나 크기를 확인해주세요.'
+              break
+            case 'MAX_RETRIES_EXCEEDED':
+              errorDescription = '잠시 후 다시 시도해주세요.'
+              break
+            default:
+              errorDescription = '잠시 후 다시 시도해주세요.'
+          }
+
+          toast.error(errorMessage, {
+            id: 'transcribing',
+            description: errorDescription,
+            duration: 5000,
+          })
+
+          // API 키 오류인 경우 설정 페이지로 안내
+          if (transcriptionError.code === 'INVALID_API_KEY') {
+            setTimeout(() => {
+              window.location.href = '/settings'
+            }, 3000)
+          }
+        } finally {
+          setIsTranscribing(false)
+        }
       }
     } else {
       startRecording()
@@ -174,13 +345,18 @@ export default function HomePage() {
                 <Button
                   size="lg"
                   onClick={handleRecordToggle}
+                  disabled={appIsTranscribing}
                   className={`w-32 h-32 rounded-full transition-all duration-300 flex items-center justify-center ${
                     isRecording
                       ? 'bg-red-500 hover:bg-red-600 shadow-lg shadow-red-500/50'
+                      : appIsTranscribing
+                      ? 'bg-muted cursor-not-allowed'
                       : 'bg-primary hover:bg-primary/90 shadow-lg shadow-primary/50'
                   }`}
                 >
-                  {isRecording ? (
+                  {appIsTranscribing ? (
+                    <Loader2 className="w-24 h-24 animate-spin" />
+                  ) : isRecording ? (
                     <Square className="w-24 h-24" fill="currentColor" />
                   ) : (
                     <Mic className="w-24 h-24" />
@@ -188,7 +364,11 @@ export default function HomePage() {
                 </Button>
 
                 <p className="text-sm text-muted-foreground">
-                  {isRecording ? 'Click to stop recording' : 'Click to start recording'}
+                  {appIsTranscribing
+                    ? '전사 중...'
+                    : isRecording
+                    ? 'Click to stop recording'
+                    : 'Click to start recording'}
                 </p>
               </div>
             </div>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { memo, useState, useEffect, useCallback } from 'react'
 import { Textarea } from './ui/textarea'
 import { Button } from './ui/button'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from './ui/card'
@@ -13,7 +13,7 @@ interface TranscriptionResultProps {
   isLoading?: boolean
 }
 
-export default function TranscriptionResult({
+const TranscriptionResult = memo(function TranscriptionResult({
   text,
   onTextChange,
   onSave,
@@ -27,22 +27,22 @@ export default function TranscriptionResult({
     setEditedText(text)
   }, [text])
   
-  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newText = e.target.value
     setEditedText(newText)
     onTextChange?.(newText)
-  }
+  }, [onTextChange])
   
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     setIsEditing(false)
     onSave?.(editedText)
     await copy(editedText)
-  }
+  }, [editedText, onSave, copy])
 
-  const handleCancel = () => {
+  const handleCancel = useCallback(() => {
     setEditedText(text)
     setIsEditing(false)
-  }
+  }, [text])
   
   return (
     <Card className="w-full">
@@ -122,5 +122,7 @@ export default function TranscriptionResult({
       )}
     </Card>
   )
-}
+})
+
+export default TranscriptionResult
 

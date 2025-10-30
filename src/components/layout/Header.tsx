@@ -1,7 +1,7 @@
 import { Link, useLocation } from 'react-router-dom'
 import { useTheme } from '../theme-provider'
 import { Button } from '../ui/button'
-import { Moon, Sun, History } from 'lucide-react'
+import { Moon, Sun, History, Settings } from 'lucide-react'
 
 export default function Header() {
   const location = useLocation()
@@ -40,6 +40,16 @@ export default function Header() {
             >
               <History size={16} />
               History
+            </Button>
+          </Link>
+          <Link to="/settings">
+            <Button
+              variant={location.pathname === '/settings' ? 'default' : 'ghost'}
+              size="sm"
+              className="gap-2"
+            >
+              <Settings size={16} />
+              Settings
             </Button>
           </Link>
 

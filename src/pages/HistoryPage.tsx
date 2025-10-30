@@ -1,9 +1,8 @@
-import { useState } from 'react'
-import { Search, Filter, Eye, Edit2, Copy, Trash2, Clock, Calendar, FileText, CheckCircle2 } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Search, Trash2, Copy, Clock, Calendar, FileText, Loader2 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
 import {
   Dialog,
@@ -13,70 +12,26 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-
-interface Transcription {
-  id: string
-  title: string
-  content: string
-  timestamp: string
-  duration: number
-  language: string
-  status: 'completed' | 'processing' | 'failed'
-}
-
-const mockTranscriptions: Transcription[] = [
-  {
-    id: '1',
-    title: 'Team Meeting Notes',
-    content:
-      'Discussion about Q4 roadmap and feature priorities. Key points: focus on user experience improvements, implement new analytics dashboard, and optimize performance for mobile devices.',
-    timestamp: '2024-01-15T10:30:00',
-    duration: 1845,
-    language: 'English',
-    status: 'completed',
-  },
-  {
-    id: '2',
-    title: 'Client Interview',
-    content:
-      'Interview with potential client about their requirements for the new project. They need a comprehensive solution that includes real-time collaboration features.',
-    timestamp: '2024-01-14T14:20:00',
-    duration: 2730,
-    language: 'English',
-    status: 'completed',
-  },
-  {
-    id: '3',
-    title: 'Product Demo Recording',
-    content:
-      'Demonstration of the new features including voice recognition, multi-language support, and export capabilities. The demo covered all major use cases.',
-    timestamp: '2024-01-13T09:15:00',
-    duration: 1260,
-    language: 'English',
-    status: 'completed',
-  },
-  {
-    id: '4',
-    title: 'Podcast Episode 42',
-    content:
-      'Discussion about the future of AI in transcription services and how it impacts content creators. Guest speaker shared insights on industry trends.',
-    timestamp: '2024-01-12T16:45:00',
-    duration: 3600,
-    language: 'English',
-    status: 'completed',
-  },
-]
+import {
+  getTranscriptions,
+  deleteTranscription,
+  searchTranscriptions,
+  type Transcription,
+} from '../services/transcriptionService'
+import { toast } from 'sonner'
 
 const formatDuration = (seconds: number): string => {
   const hours = Math.floor(seconds / 3600)
   const minutes = Math.floor((seconds % 3600) / 60)
-  const secs = seconds % 60
+  const secs = Math.floor(seconds % 60)
 
   if (hours > 0) {
     return `${hours}h ${minutes}m ${secs}s`
   }
-  return `${minutes}m ${secs}s`
+  if (minutes > 0) {
+    return `${minutes}m ${secs}s`
+  }
+  return `${secs}s`
 }
 
 const formatDate = (dateString: string): string => {
@@ -85,56 +40,75 @@ const formatDate = (dateString: string): string => {
   const diffTime = Math.abs(now.getTime() - date.getTime())
   const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
 
-  if (diffDays === 0) return 'Today'
+  if (diffDays === 0) {
+    const diffHours = Math.floor(diffTime / (1000 * 60 * 60))
+    if (diffHours === 0) {
+      const diffMinutes = Math.floor(diffTime / (1000 * 60))
+      return diffMinutes === 0 ? 'Just now' : `${diffMinutes} minutes ago`
+    }
+    return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
+  }
   if (diffDays === 1) return 'Yesterday'
   if (diffDays < 7) return `${diffDays} days ago`
 
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 export default function HistoryPage() {
-  const [transcriptions, setTranscriptions] = useState<Transcription[]>(mockTranscriptions)
+  const [transcriptions, setTranscriptions] = useState<Transcription[]>([])
+  const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
-  const [filterStatus, setFilterStatus] = useState<string>('all')
   const [selectedTranscription, setSelectedTranscription] = useState<Transcription | null>(null)
-  const [viewDialogOpen, setViewDialogOpen] = useState(false)
-  const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
-  const [editContent, setEditContent] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
 
-  const filteredTranscriptions = transcriptions.filter((t) => {
-    const matchesSearch =
-      t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      t.content.toLowerCase().includes(searchQuery.toLowerCase())
-    const matchesFilter = filterStatus === 'all' || t.status === filterStatus
-    return matchesSearch && matchesFilter
-  })
-
-  const handleView = (transcription: Transcription) => {
-    setSelectedTranscription(transcription)
-    setViewDialogOpen(true)
-  }
-
-  const handleEdit = (transcription: Transcription) => {
-    setSelectedTranscription(transcription)
-    setEditContent(transcription.content)
-    setEditDialogOpen(true)
-  }
-
-  const handleSaveEdit = () => {
-    if (selectedTranscription) {
-      setTranscriptions((prev) =>
-        prev.map((t) => (t.id === selectedTranscription.id ? { ...t, content: editContent } : t))
-      )
-      setEditDialogOpen(false)
+  const loadTranscriptions = async () => {
+    try {
+      setIsLoading(true)
+      const data = await getTranscriptions()
+      setTranscriptions(data)
+    } catch (error) {
+      console.error('Failed to load transcriptions:', error)
+      toast.error('이력을 불러오는데 실패했습니다.', {
+        description: '전사 이력을 불러올 수 없습니다. 잠시 후 다시 시도해주세요.',
+      })
+    } finally {
+      setIsLoading(false)
     }
   }
 
-  const handleCopy = async (transcription: Transcription) => {
-    await navigator.clipboard.writeText(transcription.content)
-    setCopiedId(transcription.id)
-    setTimeout(() => setCopiedId(null), 2000)
+  useEffect(() => {
+    loadTranscriptions()
+  }, [])
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) {
+      return loadTranscriptions()
+    }
+
+    try {
+      setIsLoading(true)
+      const results = await searchTranscriptions(searchQuery)
+      setTranscriptions(results)
+      if (results.length === 0) {
+        toast.info('검색 결과가 없습니다.', {
+          description: '다른 검색어로 시도해주세요.',
+        })
+      }
+    } catch (error) {
+      console.error('Search failed:', error)
+      toast.error('검색에 실패했습니다.', {
+        description: '전사를 검색할 수 없습니다.',
+      })
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   const handleDelete = (transcription: Transcription) => {
@@ -142,17 +116,36 @@ export default function HistoryPage() {
     setDeleteDialogOpen(true)
   }
 
-  const confirmDelete = () => {
-    if (selectedTranscription) {
+  const confirmDelete = async () => {
+    if (!selectedTranscription) return
+
+    try {
+      await deleteTranscription(selectedTranscription.id)
       setTranscriptions((prev) => prev.filter((t) => t.id !== selectedTranscription.id))
       setDeleteDialogOpen(false)
+      toast.success('전사가 삭제되었습니다.')
+    } catch (error) {
+      console.error('Delete failed:', error)
+      toast.error('삭제에 실패했습니다.', {
+        description: '전사를 삭제할 수 없습니다.',
+      })
+    }
+  }
+
+  const handleCopy = async (text: string, id: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedId(id)
+      toast.success('클립보드에 복사되었습니다.')
+      setTimeout(() => setCopiedId(null), 2000)
+    } catch (error) {
+      console.error('Failed to copy:', error)
+      toast.error('복사에 실패했습니다.')
     }
   }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5">
-      <div className="absolute inset-0 bg-grid-white/5 bg-[size:20px_20px] pointer-events-none" />
-
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="mb-8 animate-in fade-in slide-in-from-top-4 duration-700">
           <h1 className="text-4xl font-bold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent mb-2">
@@ -169,27 +162,29 @@ export default function HistoryPage() {
               placeholder="Search transcriptions..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               className="pl-10 bg-background/60 backdrop-blur-sm border-border/50 focus:border-primary transition-all"
             />
           </div>
-
-          <div className="flex gap-2">
-            <Select value={filterStatus} onValueChange={setFilterStatus}>
-              <SelectTrigger className="w-[180px] bg-background/60 backdrop-blur-sm border-border/50">
-                <Filter className="h-4 w-4 mr-2" />
-                <SelectValue placeholder="Filter by status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="completed">Completed</SelectItem>
-                <SelectItem value="processing">Processing</SelectItem>
-                <SelectItem value="failed">Failed</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          <Button onClick={handleSearch} disabled={isLoading}>
+            {isLoading ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Search className="h-4 w-4 mr-2" />
+            )}
+            Search
+          </Button>
         </div>
 
-        {filteredTranscriptions.length === 0 ? (
+        {isLoading ? (
+          <Card className="border-dashed border-2 bg-background/40 backdrop-blur-sm">
+            <CardContent className="flex flex-col items-center justify-center py-16">
+              <Loader2 className="h-12 w-12 text-primary animate-spin mb-4" />
+              <h3 className="text-xl font-semibold mb-2">Loading transcriptions...</h3>
+              <p className="text-muted-foreground">Please wait while we fetch your transcriptions</p>
+            </CardContent>
+          </Card>
+        ) : transcriptions.length === 0 ? (
           <Card className="border-dashed border-2 bg-background/40 backdrop-blur-sm animate-in fade-in zoom-in-95 duration-500">
             <CardContent className="flex flex-col items-center justify-center py-16">
               <div className="rounded-full bg-primary/10 p-6 mb-4">
@@ -197,15 +192,15 @@ export default function HistoryPage() {
               </div>
               <h3 className="text-xl font-semibold mb-2">No transcriptions found</h3>
               <p className="text-muted-foreground text-center max-w-md">
-                {searchQuery || filterStatus !== 'all'
-                  ? 'Try adjusting your search or filter criteria'
+                {searchQuery
+                  ? 'Try adjusting your search criteria'
                   : 'Start by creating your first transcription'}
               </p>
             </CardContent>
           </Card>
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-2">
-            {filteredTranscriptions.map((transcription, index) => (
+            {transcriptions.map((transcription, index) => (
               <Card
                 key={transcription.id}
                 className="group hover:shadow-lg hover:shadow-primary/5 transition-all duration-300 bg-background/60 backdrop-blur-sm border-border/50 hover:border-primary/50 animate-in fade-in slide-in-from-bottom-4"
@@ -215,68 +210,51 @@ export default function HistoryPage() {
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
                       <CardTitle className="text-lg mb-2 group-hover:text-primary transition-colors">
-                        {transcription.title}
+                        Transcription {index + 1}
                       </CardTitle>
                       <CardDescription className="line-clamp-2">
-                        {transcription.content}
+                        {transcription.text}
                       </CardDescription>
                     </div>
-                    <Badge
-                      variant={transcription.status === 'completed' ? 'default' : 'secondary'}
-                      className="ml-2 shrink-0"
-                    >
-                      {transcription.status}
-                    </Badge>
                   </div>
                 </CardHeader>
                 <CardContent>
                   <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
                     <div className="flex items-center gap-1">
                       <Calendar className="h-3.5 w-3.5" />
-                      <span>{formatDate(transcription.timestamp)}</span>
+                      <span>{formatDate(transcription.created_at)}</span>
                     </div>
                     <div className="flex items-center gap-1">
                       <Clock className="h-3.5 w-3.5" />
-                      <span>{formatDuration(transcription.duration)}</span>
+                      <span>{formatDuration(transcription.audio_duration)}</span>
                     </div>
+                    {transcription.language && (
+                      <Badge variant="outline" className="text-xs">
+                        {transcription.language}
+                      </Badge>
+                    )}
                   </div>
 
                   <div className="flex gap-2">
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => handleView(transcription)}
+                      onClick={() => handleCopy(transcription.text, transcription.id)}
                       className="flex-1 group/btn hover:bg-primary hover:text-primary-foreground transition-all"
-                    >
-                      <Eye className="h-4 w-4 mr-1 group-hover/btn:scale-110 transition-transform" />
-                      View
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleEdit(transcription)}
-                      className="flex-1 group/btn hover:bg-primary hover:text-primary-foreground transition-all"
-                    >
-                      <Edit2 className="h-4 w-4 mr-1 group-hover/btn:scale-110 transition-transform" />
-                      Edit
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleCopy(transcription)}
-                      className="group/btn hover:bg-primary hover:text-primary-foreground transition-all"
                     >
                       {copiedId === transcription.id ? (
-                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        <Copy className="h-4 w-4 mr-1 text-green-468" />
                       ) : (
-                        <Copy className="h-4 w-4 group-hover/btn:scale-110 transition-transform" />
+                        <Copy className="h-4 w-4 mr-1 group-hover/btn:scale-110 transition-transform" />
                       )}
+                      Copy
                     </Button>
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={() => handleDelete(transcription)}
                       className="group/btn hover:bg-destructive hover:text-destructive-foreground transition-all"
+                      aria-label="Delete transcription"
                     >
                       <Trash2 className="h-4 w-4 group-hover/btn:scale-110 transition-transform" />
                     </Button>
@@ -288,61 +266,12 @@ export default function HistoryPage() {
         )}
       </div>
 
-      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{selectedTranscription?.title}</DialogTitle>
-            <DialogDescription>
-              <div className="flex items-center gap-4 mt-2">
-                <span className="flex items-center gap-1">
-                  <Calendar className="h-3.5 w-3.5" />
-                  {selectedTranscription && formatDate(selectedTranscription.timestamp)}
-                </span>
-                <span className="flex items-center gap-1">
-                  <Clock className="h-3.5 w-3.5" />
-                  {selectedTranscription && formatDuration(selectedTranscription.duration)}
-                </span>
-              </div>
-            </DialogDescription>
-          </DialogHeader>
-          <div className="mt-4">
-            <p className="text-sm leading-relaxed whitespace-pre-wrap">
-              {selectedTranscription?.content}
-            </p>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Edit Transcription</DialogTitle>
-            <DialogDescription>Make changes to your transcription content</DialogDescription>
-          </DialogHeader>
-          <div className="mt-4">
-            <Textarea
-              value={editContent}
-              onChange={(e) => setEditContent(e.target.value)}
-              className="min-h-[300px] resize-none"
-              placeholder="Enter transcription content..."
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSaveEdit}>Save Changes</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete Transcription</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete "{selectedTranscription?.title}"? This action cannot
-              be undone.
+              Are you sure you want to delete this transcription? This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -355,7 +284,6 @@ export default function HistoryPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
     </div>
   )
 }

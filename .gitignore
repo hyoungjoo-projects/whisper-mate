@@ -33,4 +33,9 @@ node_modules/
 
 # Task files
 # tasks.json
-# tasks/ 
+# tasks/
+
+# Playwright
+/test-results/
+/playwright-report/
+/playwright/.cache/ 
