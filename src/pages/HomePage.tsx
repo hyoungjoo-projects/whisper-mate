@@ -9,6 +9,7 @@ import { useSettings } from '../context/SettingsContext'
 import { useTranscriptionState } from '../hooks/useTranscriptionState'
 import { transcribeAudio, type TranscriptionError } from '../services/whisperService'
 import { toast } from 'sonner'
+import { getElectronEventAPI, isElectron } from '../utils/environment'
 
 interface AudioVisualizerProps {
   isRecording: boolean
@@ -93,6 +94,28 @@ export default function HomePage() {
       }
     }
   }, [isRecording])
+
+  // Listen for Electron global shortcut events
+  useEffect(() => {
+    if (isElectron() && !isRecording) {
+      const electronEventAPI = getElectronEventAPI()
+      if (electronEventAPI?.onStartRecording) {
+        const handleStartRecording = () => {
+          if (!isRecording && !appIsTranscribing) {
+            startRecording()
+          }
+        }
+
+        electronEventAPI.onStartRecording(handleStartRecording)
+
+        return () => {
+          if (electronEventAPI.removeStartRecordingListener) {
+            electronEventAPI.removeStartRecordingListener(handleStartRecording)
+          }
+        }
+      }
+    }
+  }, [isRecording, appIsTranscribing, startRecording])
 
   // Auto-process audioBlob when it becomes available after recording stops
   useEffect(() => {
@@ -299,7 +322,7 @@ export default function HomePage() {
             <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center">
               <Volume2 className="w-6 h-6 text-primary-foreground" />
             </div>
-            <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+            <h1 className="text-4xl md:text-5xl font-bold text-foreground">
               Whisper Mate
             </h1>
           </div>

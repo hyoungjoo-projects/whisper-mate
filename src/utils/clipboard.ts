@@ -1,10 +1,25 @@
+import { getElectronAPI, isElectron } from './environment'
+
 export async function copyToClipboard(text: string): Promise<boolean> {
   if (!text) {
     return false
   }
 
   try {
-    // Use modern Clipboard API if available
+    // Use Electron API if available (for desktop app)
+    if (isElectron()) {
+      const electronAPI = getElectronAPI()
+      if (electronAPI?.copyToClipboard) {
+        try {
+          return await electronAPI.copyToClipboard(text)
+        } catch (error) {
+          console.error('Electron clipboard error:', error)
+          // Fall through to web fallback
+        }
+      }
+    }
+
+    // Use modern Clipboard API if available (for web)
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(text)
       return true
