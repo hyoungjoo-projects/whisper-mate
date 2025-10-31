@@ -24,7 +24,17 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       const stored = localStorage.getItem(SETTINGS_STORAGE_KEY)
       if (stored) {
         const parsed = JSON.parse(stored)
-        return { ...defaultSettings, ...parsed }
+        // 마이그레이션: panelRecording 제거
+        if (parsed.shortcuts && parsed.shortcuts.panelRecording) {
+          delete parsed.shortcuts.panelRecording
+        }
+        const migrated = { ...defaultSettings, ...parsed }
+        // shortcuts도 마이그레이션 적용
+        if (migrated.shortcuts) {
+          migrated.shortcuts = { ...defaultSettings.shortcuts, ...migrated.shortcuts }
+          delete migrated.shortcuts.panelRecording
+        }
+        return migrated
       }
     } catch (error) {
       console.error('Failed to load settings:', error)
@@ -37,10 +47,27 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     setTheme(settings.theme)
   }, [settings.theme, setTheme])
 
+  // panelRecording 제거 마이그레이션 (설정 상태에서 제거)
+  useEffect(() => {
+    if (settings.shortcuts && 'panelRecording' in settings.shortcuts) {
+      const { panelRecording, ...shortcuts } = settings.shortcuts
+      setSettings((prev) => ({
+        ...prev,
+        shortcuts: shortcuts as AppSettings['shortcuts'],
+      }))
+    }
+  }, [settings.shortcuts])
+
   // 설정 저장
   useEffect(() => {
     try {
-      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings))
+      // panelRecording 제거 후 저장
+      const settingsToSave = { ...settings }
+      if (settingsToSave.shortcuts && settingsToSave.shortcuts.panelRecording) {
+        const { panelRecording, ...shortcuts } = settingsToSave.shortcuts
+        settingsToSave.shortcuts = shortcuts as AppSettings['shortcuts']
+      }
+      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settingsToSave))
     } catch (error) {
       console.error('Failed to save settings:', error)
     }

@@ -18,6 +18,7 @@ import {
   searchTranscriptions,
   type Transcription,
 } from '../services/transcriptionService'
+import { copyToClipboard } from '../utils/clipboard'
 import { toast } from 'sonner'
 
 const formatDuration = (seconds: number): string => {
@@ -133,14 +134,15 @@ export default function HistoryPage() {
   }
 
   const handleCopy = async (text: string, id: string) => {
-    try {
-      await navigator.clipboard.writeText(text)
+    const success = await copyToClipboard(text)
+    if (success) {
       setCopiedId(id)
       toast.success('클립보드에 복사되었습니다.')
       setTimeout(() => setCopiedId(null), 2000)
-    } catch (error) {
-      console.error('Failed to copy:', error)
-      toast.error('복사에 실패했습니다.')
+    } else {
+      toast.error('복사에 실패했습니다.', {
+        description: '수동으로 복사해주세요',
+      })
     }
   }
 

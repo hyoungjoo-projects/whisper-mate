@@ -33,7 +33,6 @@ export interface AppSettings {
   // 키보드 단축키
   shortcuts: {
     startStopRecording: KeyboardShortcut
-    panelRecording: KeyboardShortcut
     copyText: KeyboardShortcut
     saveTranscription: KeyboardShortcut
   }
@@ -45,7 +44,7 @@ export const defaultSettings: AppSettings = {
   uiLanguage: 'ko',
   audioQuality: 'medium',
   theme: 'system',
-  autoCopyToClipboard: true,
+  autoCopyToClipboard: false,
   autoSave: true,
   autoStartRecording: false,
   shortcuts: {
@@ -54,12 +53,6 @@ export const defaultSettings: AppSettings = {
       key: 'Ctrl+Shift+R',
       editable: true,
       description: '음성 녹음을 시작하거나 중지합니다',
-    },
-    panelRecording: {
-      action: '패널 녹음',
-      key: 'Ctrl+Shift+P',
-      editable: true,
-      description: '녹음 패널을 열고 녹음을 시작합니다',
     },
     copyText: {
       action: '텍스트 복사',
@@ -87,6 +80,11 @@ export const languageOptions: { value: Language; label: string }[] = [
   { value: 'pt', label: 'Português' },
   { value: 'ru', label: 'Русский' },
   { value: 'it', label: 'Italiano' },
+]
+
+export const uiLanguageOptions: { value: Language; label: string }[] = [
+  { value: 'ko', label: '한국어' },
+  { value: 'en', label: 'English(개발중)' },
 ]
 
 export const audioQualityOptions: { value: AudioQuality; label: string; bitrate: string }[] = [

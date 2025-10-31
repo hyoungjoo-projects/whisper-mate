@@ -245,9 +245,31 @@ function registerShortcuts() {
 }
 
 // IPC handlers
-ipcMain.handle('copy-to-clipboard', (_, text) => {
-  clipboard.writeText(text)
-  return true
+ipcMain.handle('copy-to-clipboard', async (_, text) => {
+  try {
+    console.log('[Electron Main] copy-to-clipboard IPC called with text length:', text?.length || 0)
+    
+    if (!text || typeof text !== 'string') {
+      console.error('[Electron Main] Invalid text provided to copy-to-clipboard:', text, typeof text)
+      return false
+    }
+    
+    console.log('[Electron Main] Calling clipboard.writeText')
+    clipboard.writeText(text)
+    console.log('[Electron Main] clipboard.writeText completed successfully')
+    
+    // Verify the copy was successful by reading it back (optional, for debugging)
+    const clipboardText = clipboard.readText()
+    const isSuccess = clipboardText === text
+    console.log('[Electron Main] Clipboard verification:', isSuccess ? 'SUCCESS' : 'FAILED')
+    console.log('[Electron Main] Expected length:', text.length, 'Actual length:', clipboardText.length)
+    
+    return isSuccess
+  } catch (error) {
+    console.error('[Electron Main] Failed to copy to clipboard:', error)
+    console.error('[Electron Main] Error details:', error.message, error.stack)
+    return false
+  }
 })
 
 app.whenReady().then(() => {

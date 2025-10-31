@@ -36,7 +36,13 @@ const TranscriptionResult = memo(function TranscriptionResult({
   const handleSave = useCallback(async () => {
     setIsEditing(false)
     onSave?.(editedText)
-    await copy(editedText)
+    // 복사 실패해도 편집 모드는 해제되어야 함
+    try {
+      await copy(editedText)
+    } catch (error) {
+      // 복사 실패는 이미 useClipboard에서 토스트로 표시됨
+      console.error('Copy failed in handleSave:', error)
+    }
   }, [editedText, onSave, copy])
 
   const handleCancel = useCallback(() => {
@@ -75,7 +81,10 @@ const TranscriptionResult = memo(function TranscriptionResult({
             autoFocus
           />
         ) : (
-          <div className="min-h-[150px] p-4 border rounded-md bg-muted/50 whitespace-pre-wrap break-words">
+          <div 
+            className="min-h-[150px] p-4 border rounded-md bg-muted/50 whitespace-pre-wrap break-words"
+            data-transcription-text={editedText}
+          >
             {editedText || (
               <span className="text-muted-foreground italic">
                 전사 결과가 여기에 표시됩니다

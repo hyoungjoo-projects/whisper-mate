@@ -19,7 +19,8 @@ import {
 import { useSettings } from '@/context/SettingsContext'
 import { deleteAllTranscriptions } from '@/services/transcriptionService'
 import { useTheme } from '@/components/theme-provider'
-import { languageOptions, audioQualityOptions, type Language, type AudioQuality, type Theme } from '@/types/settings'
+import { languageOptions, uiLanguageOptions, audioQualityOptions, type Language, type AudioQuality, type Theme } from '@/types/settings'
+import { isElectron } from '@/utils/environment'
 import { toast } from 'sonner'
 import { 
   Key, 
@@ -302,13 +303,20 @@ export default function SettingsPage() {
               action={
                 <Select
                   value={settings.uiLanguage}
-                  onValueChange={(value) => updateSettings({ uiLanguage: value as Language })}
+                  onValueChange={(value) => {
+                    updateSettings({ uiLanguage: value as Language })
+                    toast.success('UI 언어가 변경되었습니다. 페이지를 새로고침합니다.')
+                    // 언어 변경을 반영하기 위해 잠시 후 페이지 새로고침
+                    setTimeout(() => {
+                      window.location.reload()
+                    }, 1000)
+                  }}
                 >
                   <SelectTrigger className="w-[180px]">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {languageOptions.map((lang) => (
+                    {uiLanguageOptions.map((lang) => (
                       <SelectItem key={lang.value} value={lang.value}>
                         {lang.label}
                       </SelectItem>
@@ -391,11 +399,24 @@ export default function SettingsPage() {
             <SettingItem
               icon={<Settings2 className="w-5 h-5" />}
               title="자동 클립보드 복사"
-              description="전사 완료 시 자동으로 클립보드에 복사합니다"
+              description={
+                isElectron()
+                  ? "전사 완료 시 자동으로 클립보드에 복사합니다"
+                  : "전사 완료 시 자동으로 클립보드에 복사합니다 (웹에서는 작동하지 않음)"
+              }
               action={
                 <Switch
                   checked={settings.autoCopyToClipboard}
-                  onCheckedChange={(checked) => updateSettings({ autoCopyToClipboard: checked })}
+                  onCheckedChange={(checked) => {
+                    if (!isElectron() && checked) {
+                      toast.error('웹 브라우저에서는 자동 클립보드 복사가 작동하지 않습니다.', {
+                        description: '브라우저 보안 정책으로 인해 사용자 인터랙션이 필요합니다. Electron 앱에서는 자동 복사가 가능합니다.',
+                        duration: 5000,
+                      })
+                      return
+                    }
+                    updateSettings({ autoCopyToClipboard: checked })
+                  }}
                 />
               }
             />

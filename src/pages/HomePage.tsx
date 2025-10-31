@@ -7,9 +7,12 @@ import { Textarea } from '@/components/ui/textarea'
 import { useAudioRecorder } from '../hooks/useAudioRecorder'
 import { useSettings } from '../context/SettingsContext'
 import { useTranscriptionState } from '../hooks/useTranscriptionState'
+import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
+import { useClipboard } from '../hooks/useClipboard'
 import { transcribeAudio, type TranscriptionError } from '../services/whisperService'
 import { toast } from 'sonner'
 import { getElectronEventAPI, isElectron } from '../utils/environment'
+import { saveTranscription } from '../services/transcriptionService'
 
 interface AudioVisualizerProps {
   isRecording: boolean
@@ -64,6 +67,7 @@ export default function HomePage() {
     setIsTranscribing,
     saveAndCopyTranscription,
   } = useTranscriptionState()
+  const { copy } = useClipboard()
 
   const [transcriptions, setTranscriptions] = useState<TranscriptionResult[]>([
     {
@@ -75,6 +79,8 @@ export default function HomePage() {
   ])
   const timerRef = useRef<number | null>(null)
   const processingRef = useRef(false)
+  const savedTranscriptionRef = useRef<string | null>(null)
+  const processedAudioBlobRef = useRef<Blob | null>(null)
 
   useEffect(() => {
     if (isRecording) {
@@ -119,11 +125,25 @@ export default function HomePage() {
 
   // Auto-process audioBlob when it becomes available after recording stops
   useEffect(() => {
-    if (!isRecording && audioBlob && audioDuration > 0 && !processingRef.current) {
+    // 이미 처리된 audioBlob인지 확인
+    const isAlreadyProcessed = processedAudioBlobRef.current === audioBlob
+    
+    if (!isRecording && audioBlob && audioDuration > 0 && !processingRef.current && !isAlreadyProcessed) {
+      console.log('[HomePage] Starting transcription for new audioBlob')
+      
+      // 현재 설정값들을 저장 (의존성 변경으로 인한 재실행 방지)
+      const currentApiKey = settings.apiKey
+      const currentLanguage = settings.recognitionLanguage
+      const currentAutoSave = settings.autoSave
+      const currentAutoCopy = settings.autoCopyToClipboard
+      const currentDuration = audioDuration
+      
       processingRef.current = true
+      processedAudioBlobRef.current = audioBlob // 처리 시작 전에 마킹
+      savedTranscriptionRef.current = null // 새 녹음 시작 시 리셋
       
       // API 키 확인
-      if (!settings.apiKey) {
+      if (!currentApiKey) {
         toast.error('API 키가 설정되지 않았습니다.', {
           description: '설정 페이지에서 OpenAI API 키를 입력해주세요.',
           action: {
@@ -134,6 +154,7 @@ export default function HomePage() {
           },
         })
         processingRef.current = false
+        processedAudioBlobRef.current = null // 리셋하여 재시도 가능하게
         return
       }
 
@@ -142,14 +163,22 @@ export default function HomePage() {
 
       transcribeAudio(
         audioBlob,
-        settings.apiKey,
-        settings.recognitionLanguage
+        currentApiKey,
+        currentLanguage
       )
         .then((result) => {
+          // 이미 저장/복사된 텍스트인지 확인 (중복 방지)
+          if (savedTranscriptionRef.current === result.text) {
+            console.log('[HomePage] Transcription already processed, skipping')
+            return
+          }
+
+          console.log('[HomePage] Transcription completed, adding to list')
+
           const newTranscription: TranscriptionResult = {
             id: Date.now().toString(),
             text: result.text,
-            duration: formatTime(audioDuration),
+            duration: formatTime(currentDuration),
             timestamp: new Date(),
           }
 
@@ -159,8 +188,17 @@ export default function HomePage() {
           toast.success('전사가 완료되었습니다.', { id: 'transcribing' })
 
           // 자동 저장 및 복사 (설정에서 활성화된 경우)
-          if (settings.autoSave || settings.autoCopyToClipboard) {
-            saveAndCopyTranscription(result.text, audioDuration, result.language)
+          // 한 번만 실행되도록 체크
+          if (currentAutoSave || currentAutoCopy) {
+            savedTranscriptionRef.current = result.text // 저장 시작 전에 플래그 설정
+            saveAndCopyTranscription(result.text, currentDuration, result.language)
+              .then(() => {
+                // 성공 시 플래그는 유지 (중복 방지)
+              })
+              .catch((error) => {
+                // 실패 시에도 플래그는 유지하여 반복 시도 방지
+                console.error('Save or copy failed:', error)
+              })
           }
         })
         .catch((error) => {
@@ -203,9 +241,12 @@ export default function HomePage() {
         .finally(() => {
           setIsTranscribing(false)
           processingRef.current = false
+          // audioBlob은 유지 (다른 곳에서 사용할 수 있으므로)
+          // 하지만 같은 blob에 대한 재처리는 processedAudioBlobRef로 방지됨
         })
     }
-  }, [audioBlob, isRecording, audioDuration, settings, setCurrentTranscription, setIsTranscribing, saveAndCopyTranscription])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioBlob, isRecording, audioDuration]) // 의존성을 최소화하여 재실행 방지
 
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60)
@@ -214,96 +255,38 @@ export default function HomePage() {
   }
 
   const handleRecordToggle = async () => {
+    console.log('[HomePage] handleRecordToggle called, isRecording:', isRecording)
     if (isRecording) {
       stopRecording()
-      if (audioDuration > 0 && audioBlob) {
-        // API 키 확인
-        if (!settings.apiKey) {
-          toast.error('API 키가 설정되지 않았습니다.', {
-            description: '설정 페이지에서 OpenAI API 키를 입력해주세요.',
-            action: {
-              label: '설정으로 이동',
-              onClick: () => {
-                window.location.href = '/settings'
-              },
-            },
-          })
-          return
-        }
-
-        setIsTranscribing(true)
-        toast.loading('오디오를 전사하는 중...', { id: 'transcribing' })
-
-        try {
-          const result = await transcribeAudio(
-            audioBlob,
-            settings.apiKey,
-            settings.recognitionLanguage
-          )
-
-          const newTranscription: TranscriptionResult = {
-            id: Date.now().toString(),
-            text: result.text,
-            duration: formatTime(audioDuration),
-            timestamp: new Date(),
-          }
-
-          setTranscriptions([newTranscription, ...transcriptions])
-          setCurrentTranscription(result.text)
-
-          toast.success('전사가 완료되었습니다.', { id: 'transcribing' })
-
-          // 자동 저장 및 복사 (설정에서 활성화된 경우)
-          if (settings.autoSave || settings.autoCopyToClipboard) {
-            await saveAndCopyTranscription(result.text, audioDuration, result.language)
-          }
-        } catch (error) {
-          const transcriptionError = error as TranscriptionError
-          console.error('Transcription error:', transcriptionError)
-
-          let errorMessage = transcriptionError.message || '전사에 실패했습니다.'
-          let errorDescription = ''
-
-          switch (transcriptionError.code) {
-            case 'INVALID_API_KEY':
-              errorDescription = '설정 페이지에서 API 키를 확인해주세요.'
-              break
-            case 'NETWORK_ERROR':
-              errorDescription = '인터넷 연결을 확인해주세요.'
-              break
-            case 'FILE_ERROR':
-              errorDescription = '오디오 파일 형식이나 크기를 확인해주세요.'
-              break
-            case 'MAX_RETRIES_EXCEEDED':
-              errorDescription = '잠시 후 다시 시도해주세요.'
-              break
-            default:
-              errorDescription = '잠시 후 다시 시도해주세요.'
-          }
-
-          toast.error(errorMessage, {
-            id: 'transcribing',
-            description: errorDescription,
-            duration: 5000,
-          })
-
-          // API 키 오류인 경우 설정 페이지로 안내
-          if (transcriptionError.code === 'INVALID_API_KEY') {
-            setTimeout(() => {
-              window.location.href = '/settings'
-            }, 3000)
-          }
-        } finally {
-          setIsTranscribing(false)
-        }
-      }
+      // 전사는 useEffect에서 자동으로 처리되므로 여기서는 녹음만 중지
     } else {
+      // 새 녹음 시작 시 이전 처리 플래그 리셋
+      savedTranscriptionRef.current = null
+      processingRef.current = false // 처리 플래그도 리셋
+      processedAudioBlobRef.current = null // 처리된 audioBlob 리셋
       startRecording()
     }
   }
 
-  const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text)
+  const handleCopy = async (text: string) => {
+    if (text) {
+      await copy(text)
+    }
+  }
+
+  const handleSaveTranscription = async (text: string) => {
+    if (!text.trim()) {
+      toast.error('저장할 텍스트가 없습니다')
+      return
+    }
+
+    try {
+      await saveTranscription(text, audioDuration)
+      toast.success('전사가 저장되었습니다')
+    } catch (error) {
+      console.error('Failed to save transcription:', error)
+      toast.error('저장에 실패했습니다')
+    }
   }
 
   const handleDelete = (id: string) => {
@@ -312,6 +295,14 @@ export default function HomePage() {
       setCurrentTranscription('')
     }
   }
+
+  // 키보드 단축키 설정
+  useKeyboardShortcuts({
+    startStopRecording: handleRecordToggle,
+    copyText: handleCopy,
+    saveTranscription: handleSaveTranscription,
+    currentTranscription: currentTranscription,
+  })
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5">
@@ -424,6 +415,7 @@ export default function HomePage() {
                 onChange={(e) => setCurrentTranscription(e.target.value)}
                 className="min-h-[120px] resize-none"
                 placeholder="Your transcription will appear here..."
+                data-transcription-text={currentTranscription}
               />
             </div>
           </Card>
